@@ -36,6 +36,12 @@
 #   CORRECT: 54
 #   TOTAL: 126
 #   ACCURACY: 42.8571428571429%
+# Conclusion:
+#   The decision list is shockingly better than the most frequent
+#   sense baseline, it's just a simple bag of words implementation,
+#   I was expecting to use that as a start and then modify it to an
+#   ngram model later to try and improve the accuracy, but it doesn't
+#   really seem necessary.
 use List::MoreUtils qw(uniq);
 use Data::Dumper;
 
