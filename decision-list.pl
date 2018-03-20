@@ -41,12 +41,13 @@ use Data::Dumper;
 
 sub println { print "@_"."\n" }
 
-if(0+@ARGV < 2){
-    die "At least 2 arguments required";
+if(0+@ARGV < 3){
+    die "At least 3 arguments required";
 }
 
 my $train = shift @ARGV;
 my $test = shift @ARGV;
+my $log = shift @ARGV;
 my $stopwords = "stopwords.txt";
 
 if(!(-f $train)){
@@ -79,99 +80,104 @@ my %senseAppearances; # Maps senses to how often they appear (for finding most c
 my $mostCommonSense;
 
 if(open(my $fh, "<:encoding(UTF-8)", $train)){
-    my $text = do { local $/; <$fh> }; # Read in the entire file as a string
-    close $fh;
-    chomp $text;
+        my $text = do { local $/; <$fh> }; # Read in the entire file as a string
+        close $fh;
+        chomp $text;
 
-    # Get each instance out of the file
-    my @instances = ($text =~ /(<instance.*?<\/instance>)/gs);
-    
-    for my $instance (@instances){
-        my $sense = ($instance =~ /senseid=\"(.*)\"/)[0]; # Get the instance's sense
-        $senseAppearances{$sense}++;
+        # Get each instance out of the file
+        my @instances = ($text =~ /(<instance.*?<\/instance>)/gs);
+        
+        for my $instance (@instances){
+            my $sense = ($instance =~ /senseid=\"(.*)\"/)[0]; # Get the instance's sense
+            $senseAppearances{$sense}++;
 
-        my @sentences = ($instance =~ /<s>(.*?)<\/s>/gs); # Get all of its sentences (ignoring paragraphs)
-        for my $sentence (@sentences){
-            $sentence =~ s/<s>|<\/s>|<@>|<p>|<\/p>//gs; # Remove the tags so we're left with those good good words
-            $sentence =~ s/\b($stopwords)\b//gs; # Remove stopwords
-            @words = ($sentence =~ /\b\w+\b/gs); # Split sentence into words
+            my @sentences = ($instance =~ /<s>(.*?)<\/s>/gs); # Get all of its sentences (ignoring paragraphs)
+            for my $sentence (@sentences){
+                $sentence =~ s/<s>|<\/s>|<@>|<p>|<\/p>//gs; # Remove the tags so we're left with those good good words
+                $sentence =~ s/\b($stopwords)\b//gs; # Remove stopwords
+                @words = ($sentence =~ /\b\w+\b/gs); # Split sentence into words
 
-            for my $word (@words){
-                # Increment the number of times this word appears
-                $features{$word}++;
-                # Increment the number of times this word appears with this sense
-                $senses{$sense}{$word}++;
+                for my $word (@words){
+                    # Increment the number of times this word appears
+                    $features{$word}++;
+                    # Increment the number of times this word appears with this sense
+                    $senses{$sense}{$word}++;
+                }
             }
         }
-    }
 
-    # Determine the most common sense for use as a baseline later
-    $mostCommonSense = (keys %senseAppearances)[0];
-    for my $sense (keys %senseAppearances){
-        println $sense;
-        println $senseAppearances{$sense};
-        if($senseAppearances{$sense} > $senseAppearances{$mostCommonSense}){
-            $mostCommonSense = $sense;
+        # Determine the most common sense for use as a baseline later
+        $mostCommonSense = (keys %senseAppearances)[0];
+        for my $sense (keys %senseAppearances){
+            if($senseAppearances{$sense} > $senseAppearances{$mostCommonSense}){
+                $mostCommonSense = $sense;
+            }
         }
-    }
-    
-    # Divide each frequency $senses{sense}{word} by the total frequency of that word,
-    # so that the values of %senses{sense}{word} become the probabilities P(sense|word)
-    for my $sense (keys %senses){
+        
+        # Divide each frequency $senses{sense}{word} by the total frequency of that word,
+        # so that the values of %senses{sense}{word} become the probabilities P(sense|word)
+        for my $sense (keys %senses){
+            for my $word (keys %features){
+                # P(sense|word) = (freq(sense, word)+1) / (freq(word)+(sizeof(@features))
+                $senses{$sense}{$word} = ($senses{$sense}{$word}+1) / (%features{$word}+(0+(keys %features)));
+            }
+        }
+        
+        # For each word, calculate the log ratio of the probabilities
+        # of the word given each of the two senses
+        # Because of how logs work, if the result is positive it's in
+        # favor of sense 1, if it's negative it's in favor of sense 2
+        # (At this point I'm assuming there are only two senses)
+        my $sense1 = (keys %senses)[0];
+        my $sense2 = (keys %senses)[1];
         for my $word (keys %features){
-            # P(sense|word) = (freq(sense, word)+1) / (freq(word)+(sizeof(@features))
-            $senses{$sense}{$word} = ($senses{$sense}{$word}+1) / (%features{$word}+(0+(keys %features)));
+            my $probSense1 = $senses{$sense1}{$word};
+            my $probSense2 = $senses{$sense2}{$word};
+            $features{$word} = log($probSense1/$probSense2);
         }
-    }
-    
-    # For each word, calculate the log ratio of the probabilities
-    # of the word given each of the two senses
-    # Because of how logs work, if the result is positive it's in
-    # favor of sense 1, if it's negative it's in favor of sense 2
-    # (At this point I'm assuming there are only two senses)
-    my $sense1 = (keys %senses)[0];
-    my $sense2 = (keys %senses)[1];
-    for my $word (keys %features){
-        my $probSense1 = $senses{$sense1}{$word};
-        my $probSense2 = $senses{$sense2}{$word};
-        $features{$word} = log($probSense1/$probSense2);
-    }
-    @sortedKeys = sort {abs($features{$b}) <=> abs($features{$a})} keys %features;
+        @sortedKeys = sort {abs($features{$b}) <=> abs($features{$a})} keys %features;
 } else{
     die "Error opening training file '$train'";
 }
 
-if(open(my $fh, "<:encoding(UTF-8)", $test)){
-    my $text = do { local $/; <$fh> }; # Read in the entire file as a string
-    close $fh;
-    chomp $text;
+if(open(my $testfh, "<:encoding(UTF-8)", $test)){
+    if(open(my $logfh, ">:encoding(UTF-8)", $log)){
+        my $text = do { local $/; <$testfh> }; # Read in the entire file as a string
+        close $testfh;
+        chomp $text;
 
-    # Get each instance out of the file
-    my @instances = ($text =~ /(<instance.*?<\/instance>)/gs);
+        # Get each instance out of the file
+        my @instances = ($text =~ /(<instance.*?<\/instance>)/gs);
 
-    for my $instance (@instances){
-        my $id = ($instance =~ /id="(.*?)"/)[0];
-        my @sentencesArray = ($instance =~ /<s>(.*?)<\/s>/gs); # Get all of its sentences (ignoring paragraphs)
-        my $sentences = join " ", @sentencesArray;
-        $sentences =~ s/<s>|<\/s>|<@>|<p>|<\/p>//gs; # Remove the tags
+        for my $instance (@instances){
+            my $id = ($instance =~ /id="(.*?)"/)[0];
+            my @sentencesArray = ($instance =~ /<s>(.*?)<\/s>/gs); # Get all of its sentences (ignoring paragraphs)
+            my $sentences = join " ", @sentencesArray;
+            $sentences =~ s/<s>|<\/s>|<@>|<p>|<\/p>//gs; # Remove the tags
 
-        my $sense1 = (keys %senses)[0];
-        my $sense2 = (keys %senses)[1];
-        my $predictedSense = $mostCommonSense;
-        for my $key (@sortedKeys){
-            if($sentences =~ /\b$key\b/){
-                if($features{$key} > 0){
-                    $predictedSense = $sense1;
-                    last;
-                }
-                if($features{$key} < 0){
-                    $predictedSense = $sense2;
-                    last;
+            my $sense1 = (keys %senses)[0];
+            my $sense2 = (keys %senses)[1];
+            my $predictedSense = $mostCommonSense;
+            for my $key (@sortedKeys){
+                if($sentences =~ /\b$key\b/){
+                    if($features{$key} > 0){
+                        $predictedSense = $sense1;
+                        last;
+                    }
+                    if($features{$key} < 0){
+                        $predictedSense = $sense2;
+                        last;
+                    }
                 }
             }
+            my $answerTag = "<answer instance=\"$id\" senseid=\"$predictedSense\"\/>";
+            print $logfh $answerTag."\n";
+            $instance =~ s/(.*)/$1\n$answerTag/;
+            println $instance;
         }
-        $instance =~ s/(.*)/$1\n<answer instance="$id" senseid="$mostCommonSense"\/>/;
-        println $instance;
+        close $logfh;
+    } else{
+        die "Error opening log file '$log'";
     }
 } else{
     die "Error opening testing file '$test'";
