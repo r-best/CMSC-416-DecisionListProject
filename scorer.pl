@@ -66,7 +66,7 @@ my %predictions;
 for(my $i = 0; $i < 0+@input; $i++){
     $predictions{$key[$i]}{$input[$i]}++;
 
-    if($inputTag eq $keyTag){
+    if($input[$i] eq $key[$i]){
         $correct++;
     }
     $total++;

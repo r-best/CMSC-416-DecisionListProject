@@ -34,7 +34,9 @@ if(open(my $fh, "<:encoding(UTF-8)", $stopwords)){
 # i.e. @senses{sense} = [words]
 #      $senses{sense}{word} = freq
 my %senses;
-my %features; # Maps all features to how often they appear
+my %features; # Maps all features to how often they appear, later changes to map to log ratio
+
+my @sortedKeys; # Keys of %features sorted by descending value, populated at end of training
 
 if(open(my $fh, "<:encoding(UTF-8)", $train)){
     my $text = do { local $/; <$fh> }; # Read in the entire file as a string
@@ -81,8 +83,45 @@ if(open(my $fh, "<:encoding(UTF-8)", $train)){
     for my $word (keys %features){
         my $probSense1 = $senses{$sense1}{$word};
         my $probSense2 = $senses{$sense2}{$word};
-        $features{$word} = log($probSense1/$probSense2) / log(10);
+        $features{$word} = log($probSense1/$probSense2);
     }
+    @sortedKeys = sort {abs($features{$b}) <=> abs($features{$a})} keys %features;
 } else{
     die "Error opening training file '$train'";
+}
+
+if(open(my $fh, "<:encoding(UTF-8)", $test)){
+    my $text = do { local $/; <$fh> }; # Read in the entire file as a string
+    close $fh;
+    chomp $text;
+
+    # Get each instance out of the file
+    my @instances = ($text =~ /(<instance.*?<\/instance>)/gs);
+
+    for my $instance (@instances){
+        my $id = ($instance =~ /id="(.*?)"/)[0];
+        my @sentencesArray = ($instance =~ /<s>(.*?)<\/s>/gs); # Get all of its sentences (ignoring paragraphs)
+        my $sentences = join " ", @sentencesArray;
+        $sentences =~ s/<s>|<\/s>|<@>|<p>|<\/p>//gs; # Remove the tags
+
+        my $sense1 = (keys %senses)[0];
+        my $sense2 = (keys %senses)[1];
+        my $predictedSense = 0+(keys %{$senses{$sense1}}) > 0+(keys %{$senses{$sense1}}) ? $sense1 : $sense2;
+        for my $key (@sortedKeys){
+            if($sentences =~ /\b$key\b/){
+                if($features{$key} > 0){
+                    $predictedSense = $sense1;
+                    last;
+                }
+                if($features{$key} < 0){
+                    $predictedSense = $sense2;
+                    last;
+                }
+            }
+        }
+        $instance =~ s/(.*)/$1\n<answer instance="$id" senseid="$predictedSense"\/>/;
+        println $instance;
+    }
+} else{
+    die "Error opening testing file '$test'";
 }
