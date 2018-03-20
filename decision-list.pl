@@ -1,3 +1,41 @@
+# Assignment 4 decision-list.pl
+# CMSC 416
+# Due: Mon Mar. 26, 2018
+# Program Summary:
+#   A word sense tagger that takes in pre-tagged training data
+#   and untagged testing data, learns what instances get what senses 
+#   from the training, and uses that to correctly tag the testing.
+# Algorithm:
+#   Reads through the training data, and for each instance goes through
+#   all the words in it and builds a frequency count of the number of
+#   times each word appears with each sense. Uses that to build a decision
+#   list model based on how strongly a word is associated with a particular
+#   sense, then applies that model to the test data.
+# Usage Format:
+#   perl decision-list.pl training.txt testing.txt
+#       - Will train on the data in training.txt
+#           and output a copy of testing.txt that
+#           has been tagged.
+# Results:
+#   .---------+---------+-------.
+#   |         | product | phone |
+#   +---------+---------+-------+
+#   | product | 46      | 8     |
+#   | phone   | 3       | 69    |
+#   '---------+---------+-------'
+#   CORRECT: 115
+#   TOTAL: 126
+#   ACCURACY: 91.2698412698413%
+# Results on Most Frequent Sense:
+#   .---------+-------+---------.
+#   |         | phone | product |
+#   +---------+-------+---------+
+#   | phone   | 0     | 72      |
+#   | product | 0     | 54      |
+#   '---------+-------+---------'
+#   CORRECT: 54
+#   TOTAL: 126
+#   ACCURACY: 42.8571428571429%
 use List::MoreUtils qw(uniq);
 use Data::Dumper;
 
@@ -37,6 +75,8 @@ my %senses;
 my %features; # Maps all features to how often they appear, later changes to map to log ratio
 
 my @sortedKeys; # Keys of %features sorted by descending value, populated at end of training
+my %senseAppearances; # Maps senses to how often they appear (for finding most common sense baseline)
+my $mostCommonSense;
 
 if(open(my $fh, "<:encoding(UTF-8)", $train)){
     my $text = do { local $/; <$fh> }; # Read in the entire file as a string
@@ -48,8 +88,9 @@ if(open(my $fh, "<:encoding(UTF-8)", $train)){
     
     for my $instance (@instances){
         my $sense = ($instance =~ /senseid=\"(.*)\"/)[0]; # Get the instance's sense
+        $senseAppearances{$sense}++;
+
         my @sentences = ($instance =~ /<s>(.*?)<\/s>/gs); # Get all of its sentences (ignoring paragraphs)
-        
         for my $sentence (@sentences){
             $sentence =~ s/<s>|<\/s>|<@>|<p>|<\/p>//gs; # Remove the tags so we're left with those good good words
             $sentence =~ s/\b($stopwords)\b//gs; # Remove stopwords
@@ -61,6 +102,16 @@ if(open(my $fh, "<:encoding(UTF-8)", $train)){
                 # Increment the number of times this word appears with this sense
                 $senses{$sense}{$word}++;
             }
+        }
+    }
+
+    # Determine the most common sense for use as a baseline later
+    $mostCommonSense = (keys %senseAppearances)[0];
+    for my $sense (keys %senseAppearances){
+        println $sense;
+        println $senseAppearances{$sense};
+        if($senseAppearances{$sense} > $senseAppearances{$mostCommonSense}){
+            $mostCommonSense = $sense;
         }
     }
     
@@ -106,7 +157,7 @@ if(open(my $fh, "<:encoding(UTF-8)", $test)){
 
         my $sense1 = (keys %senses)[0];
         my $sense2 = (keys %senses)[1];
-        my $predictedSense = 0+(keys %{$senses{$sense1}}) > 0+(keys %{$senses{$sense1}}) ? $sense1 : $sense2;
+        my $predictedSense = $mostCommonSense;
         for my $key (@sortedKeys){
             if($sentences =~ /\b$key\b/){
                 if($features{$key} > 0){
@@ -119,7 +170,7 @@ if(open(my $fh, "<:encoding(UTF-8)", $test)){
                 }
             }
         }
-        $instance =~ s/(.*)/$1\n<answer instance="$id" senseid="$predictedSense"\/>/;
+        $instance =~ s/(.*)/$1\n<answer instance="$id" senseid="$mostCommonSense"\/>/;
         println $instance;
     }
 } else{
